@@ -206,4 +206,30 @@ the Android debug key: fine for sideloading, not accepted by Google Play. The
 application id is `com.basalt.game`. The APK requests only Internet, vibration
 and network-state permissions (the template's camera, location, biometric,
 notification and foreground-service entries were removed), and the activity
-pads the WebView clear of the system bars for Android 15+ edge-to-edge. Windows and macOS builds are unsigned.
+pads the WebView clear of the system bars for Android 15+ edge-to-edge. Windows
+builds are unsigned.
+
+### macOS and iOS
+
+Needs a Mac with Xcode.
+
+```bash
+wails3 task darwin:package             # bin/basalt.app, arm64, ad-hoc signed
+wails3 task darwin:package:universal   # same, arm64 + amd64
+wails3 task ios:package                # bin/basalt.app for the iOS Simulator (iOS 15+)
+wails3 task ios:deploy-simulator       # package, install and launch on the booted simulator
+```
+
+- Both packages are written to `bin/basalt.app`, so move one aside before
+  building the other platform.
+- The first macOS build in a fresh clone regenerates `build/darwin/icons.icns`,
+  `build/darwin/Assets.car` and `build/windows/icon.ico` from
+  `build/appicon.icon`, which still holds the Wails template icon. The committed
+  files are the real Basalt icons; restore them with
+  `git checkout -- build/darwin/icons.icns build/darwin/Assets.car build/windows/icon.ico`.
+  Task caches the checksum in `.task/`, so later builds leave them alone.
+- `build/ios/xcode/` is regenerated from `build/config.yml` and
+  `build/appicon.png` on every iOS build and is not committed.
+- A real iPhone needs real signing and a provisioning profile:
+  `wails3 task ios:package:ipa IOS_PLATFORM=device CODESIGN_IDENTITY="Apple Development: …" PROVISIONING_PROFILE=path/to/profile.mobileprovision`,
+  or `wails3 task ios:xcode` to let Xcode manage signing.
