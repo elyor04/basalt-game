@@ -227,7 +227,8 @@ wails3 task ios:deploy-simulator       # package, install and launch on the boot
   `build/appicon.icon`. Its only layer is a full-bleed copy of
   `build/appicon.png`, the same artwork as the Windows and Android icons. After
   changing `appicon.png`, refresh that layer, then rebuild the icons. The icon
-  task also rewrites `build/windows/icon.ico`.
+  task also rewrites `build/windows/icon.ico`. Builds use the committed icons
+  and never regenerate them, so run this only when the artwork changes.
 
   ```bash
   magick \( build/appicon.png -resize 135% -gravity center -extent 1024x1024 -blur 0x24 -background black -alpha remove \) \
