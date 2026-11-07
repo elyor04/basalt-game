@@ -8,6 +8,6 @@ const files = [];
 const walk = (d) => readdirSync(d).forEach((f) => { const p = join(d, f); statSync(p).isDirectory() ? walk(p) : /\.tsx?$/.test(f) && !p.includes("i18n") && files.push(p); });
 walk(new URL("../src", import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1"));
 const src = files.map((f) => readFileSync(f, "utf8")).join("\n");
-const dynamic = ["level.", "ach.", "error.", "player."];
+const dynamic = ["level.", "ach.", "error.", "player.", "game.net."];
 const unused = keys.filter((k) => !src.includes(`"${k}"`) && !dynamic.some((p) => k.startsWith(p)));
 console.log(unused.length ? `unused keys:\n  ${unused.join("\n  ")}` : `ok: all ${keys.length} keys referenced`);

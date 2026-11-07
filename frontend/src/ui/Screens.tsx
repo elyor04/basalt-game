@@ -1,12 +1,12 @@
-import { useMemo } from "react";
-import type { DailyPuzzle, Difficulty, GameView, MoveRecord, Profile, Settings } from "../api/backend";
+import { useEffect, useMemo } from "react";
+import type { DailyPuzzle, Difficulty, GameView, MoveRecord, NetStatus, Profile, Settings } from "../api/backend";
 import { I18n, LANGS, Key, useI18n } from "../i18n";
 import { ASH, CAPTURE_GOAL, GAP, LAVA, State, cellName, coords, indexOf, newState } from "../game/rules";
 import { Board } from "./Board";
 import { Choice, ConfirmButton, Dialog, StoneIcon, Toggle } from "./common";
 
 const LEVELS: Difficulty[] = ["ember", "magma", "caldera"];
-export const ACHIEVEMENTS = ["first_win", "magma", "caldera", "pure_caldera", "streak3", "avalanche", "unbroken", "hotseat", "puzzle"];
+export const ACHIEVEMENTS = ["first_win", "magma", "caldera", "pure_caldera", "streak3", "avalanche", "unbroken", "hotseat", "lan", "puzzle"];
 
 // ---------------------------------------------------------------- setup
 
@@ -58,6 +58,10 @@ export function SetupDialog({ difficulty, color, forfeitLevel, onChange, onStart
 
 interface PauseProps {
   canResign: boolean;
+  /** A network game: leaving ends the match. */
+  lan: boolean;
+  /** The network game has started and is not over, so leaving resigns it. */
+  leaveResigns: boolean;
   onResume: () => void;
   onHowTo: () => void;
   onSettings: () => void;
@@ -80,11 +84,22 @@ export function PauseDialog(p: PauseProps) {
           {t("title.settings")}
         </button>
         {p.canResign && <ConfirmButton label={t("pause.resign")} confirmLabel={t("pause.resignConfirm")} onConfirm={p.onResign} />}
-        <button type="button" className="btn" onClick={p.onMenu}>
-          <span>{t("pause.menu")}</span>
-          <span className="btn-sub">{t("pause.menuSub")}</span>
-        </button>
+        {p.lan ? (
+          p.leaveResigns ? (
+            <ConfirmButton label={t("pause.leave")} confirmLabel={t("pause.leaveConfirm")} onConfirm={p.onMenu} />
+          ) : (
+            <button type="button" className="btn" onClick={p.onMenu}>
+              {t("pause.leave")}
+            </button>
+          )
+        ) : (
+          <button type="button" className="btn" onClick={p.onMenu}>
+            <span>{t("pause.menu")}</span>
+            <span className="btn-sub">{t("pause.menuSub")}</span>
+          </button>
+        )}
       </div>
+      {p.lan && p.leaveResigns && <p className="note">{t("pause.leaveSub")}</p>}
     </Dialog>
   );
 }
@@ -178,6 +193,15 @@ export function ProfileDialog({ profile, daily, onBack }: { profile: Profile; da
               <td>{num(st[l].bestStreak)}</td>
             </tr>
           ))}
+          {st.lan && (
+            <tr className="lan-row">
+              <th scope="row">{t("profile.lan")}</th>
+              <td>{num(st.lan.wins)}</td>
+              <td>{num(st.lan.losses)}</td>
+              <td>{num(st.lan.draws)}</td>
+              <td aria-hidden="true">–</td>
+            </tr>
+          )}
         </tbody>
       </table>
       <dl className="facts">
@@ -377,6 +401,7 @@ export function HistoryDialog({ history, onBack }: { history: MoveRecord[]; onBa
 
 interface ResultProps {
   game: GameView;
+  net: NetStatus | null;
   onAgain: () => void;
   onReview: () => void;
   onMenu: () => void;
@@ -411,13 +436,35 @@ export function resultReason(i18n: I18n, g: GameView): string {
   return "";
 }
 
-export function ResultDialog({ game, onAgain, onReview, onMenu }: ResultProps) {
+export function ResultDialog({ game, net, onAgain, onReview, onMenu }: ResultProps) {
   const i18n = useI18n();
   const { t, tn } = i18n;
   const o = game.outcome;
   const tone = game.mode === "hotseat" ? "neutral" : o?.result ?? "neutral";
+  const lan = game.mode === "lan";
+  // A network rematch needs the rival still connected.
+  const canAgain = !lan || net?.phase === "playing";
+  const waiting = lan && !!net?.wantRematch;
+  const lanNote = !lan
+    ? null
+    : net?.phase === "closed" && net.reason === "left"
+      ? t("game.net.left")
+      : net?.phase === "lost"
+        ? t("game.reconnecting")
+        : net?.peerRematch && !net.wantRematch
+          ? `${t("result.rivalWants")} ${t("result.rematchSwap")}`
+          : canAgain
+            ? t("result.rematchSwap")
+            : null;
+  // When the rematch button goes away or is disabled (the rival left, the
+  // link dropped, we are waiting), keep focus on a button that still works.
+  useEffect(() => {
+    const a = document.activeElement as HTMLButtonElement | null;
+    if (a && a.closest(".result") && !a.disabled) return;
+    document.querySelector<HTMLElement>(".result .btn:not(:disabled)")?.focus({ preventScroll: true });
+  }, [canAgain, waiting]);
   return (
-    <Dialog title={resultTitle(i18n, game)} className={`result tone-${tone}`} initialFocus=".btn.primary">
+    <Dialog title={resultTitle(i18n, game)} className={`result tone-${tone}`} initialFocus={canAgain && !waiting ? ".btn.primary" : ".btn:not(:disabled)"}>
       <p className="result-reason">{resultReason(i18n, game)}</p>
       {o && game.mode === "ai" && o.result === "win" && o.streak > 1 && <p className="result-streak">{tn("result.streak", o.streak)}</p>}
       {o && o.newAchievements.length > 0 && (
@@ -434,10 +481,13 @@ export function ResultDialog({ game, onAgain, onReview, onMenu }: ResultProps) {
         </ul>
       )}
       {game.saveFailed && <p className="note warn">{t("result.saveFailed")}</p>}
+      {lanNote && <p className="note">{lanNote}</p>}
       <div className="stack">
-        <button type="button" className="btn primary" onClick={onAgain}>
-          {game.mode === "puzzle" && game.winner !== game.human ? t("result.retry") : t("result.again")}
-        </button>
+        {canAgain && (
+          <button type="button" className="btn primary" disabled={waiting} onClick={onAgain}>
+            {waiting ? t("result.waitingRival") : game.mode === "puzzle" && game.winner !== game.human ? t("result.retry") : t("result.again")}
+          </button>
+        )}
         <button type="button" className="btn" onClick={onReview}>
           {t("game.review")}
         </button>

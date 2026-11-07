@@ -51,6 +51,11 @@ opening new holes to push into and breaking rows that would run through them.
 - **Play the computer** at three levels, as Lava, Ash or a random side.
 - **Two players** on one device (hot-seat), with an optional *face-to-face*
   mode that turns the far player's panel toward them on a phone.
+- **Two devices on a local network**: Wi-Fi, Ethernet, a phone or PC hotspot,
+  or a mix (a PC on a cable and a phone on the same router's Wi-Fi). One device
+  hosts and shows an 8-character code; the other picks the game from a list of
+  games found nearby, or types the code. Rematches swap colours. See
+  [Local network play](#local-network-play).
 - **Daily puzzle**: a "win in two" position generated from the UTC date by the
   Go engine, verified to have exactly one winning first move.
 - Undo, hints (the AI suggests a move), move history with push/sink counts,
@@ -61,7 +66,8 @@ opening new holes to push into and breaking rows that would run through them.
 - Animated drop, push, sink, splash and column collapse; faint trails keep the
   last move readable afterwards. Reduced motion is respected.
 - Profile: wins, losses, draws and streaks per level, longest streak, stones
-  sunk, two-player games, puzzles solved and puzzle streak, nine achievements.
+  sunk, two-player games, local-network results, puzzles solved and puzzle
+  streak, ten achievements.
 - Procedural WebAudio sound (no audio files) and native haptics on mobile.
 - English, Russian and Uzbek (Latin script, with ʻ U+02BB and ʼ U+02BC).
 
@@ -104,6 +110,63 @@ Because every level is budgeted by **time** (Ember by a small playout count),
 Caldera answers in about 1.5 s on any CPU; a slower phone just searches fewer
 playouts in that time.
 
+## Local network play
+
+Title → **Local network** → **Host a game** or **Join a game**. Both devices
+must share a network: the same Wi-Fi, a wired network, or one device's hotspot
+(the other joins it). The internet is not used.
+
+**Finding a game.** The joining device broadcasts a small "who is hosting?"
+UDP probe on every adapter, about once a second, and hosts answer directly.
+A game therefore shows up in the list after a second or two, with the host's
+device name (desktop) and code. Typing the code always works too, for
+networks that drop broadcasts.
+
+**The code** (`18JN-SXR6`) is the host's IPv4 address plus a port slot and a
+4-bit checksum, written in Crockford base32 (no I, L, O or U; O/I/L typed by
+mistake are read as 0/1/1). A host on several networks (say Ethernet and its
+own hotspot) shows one code per network.
+
+**Who decides.** The host is the referee: the guest sends what it wants to do
+(a move, resign, rematch), the host checks it with the same rules engine and
+answers with the whole move list. The rules are deterministic, so both devices
+reach the same position, and a guest cannot place an illegal stone or move out
+of turn. Undo and hints are off in network games.
+
+**When the connection drops.** Both devices notice within about 7 s (a
+heartbeat runs every 2 s), say *Reconnecting…*, and the guest redials for up to
+60 s with a token that proves it is the same player. If the link comes back,
+play continues from the same position; otherwise the game is abandoned and
+counts for nobody. Leaving a game that has started counts as resigning it (the
+menu asks to confirm). If the guest leaves or vanishes before the first move,
+the host simply waits for someone else with the same code.
+
+**Results** go to a separate *Local network* row in the profile (wins, losses,
+draws; streaks stay for games against the computer) and unlock *Across the
+room*. Network games are not saved for resuming after the app closes.
+
+**Ports.** TCP 47731–47746 (the host takes the first free one; its slot is in
+the code) and UDP 47750 for discovery. Protocol: newline-delimited JSON,
+lines up to 16 KB, version-checked at hello.
+
+**If the devices can't connect:**
+
+- **Windows**: the first time you host, Windows Firewall asks about Basalt.
+  Allow it on *public* networks too if you play over a hotspot, which Windows
+  usually treats as public. The host screen says so on Windows.
+- **Phones**: with mobile data or a VPN on, a phone can send its traffic there
+  instead of to the Wi-Fi (Android does this when the Wi-Fi has no internet).
+  Turn them off while playing; the screens on phones say so.
+- Some routers isolate Wi-Fi clients from each other (guest networks,
+  "AP isolation"); then no two devices on it can talk, in any app.
+
+On Android the app holds a Wi-Fi multicast lock while it is open
+(`CHANGE_WIFI_MULTICAST_STATE`, no prompt), because many phones drop broadcast
+packets to save power. Android 11+ also forbids the call Go uses to list
+network adapters, so `internal/lan/addrs_android.go` reads them with an unbound
+netlink address dump instead; that is how a phone sharing a hotspot finds its
+hotspot address when its default route is mobile data.
+
 ## Controls
 
 | Action | Mouse | Touch | Keyboard | Gamepad |
@@ -132,13 +195,21 @@ internal/game/               the bound service
   session.go                 live game, history, JSON views
   profile.go                 atomic JSON profile store
   achievements.go
+  lan.go                     local-network match: host/join, sync, reconnect
+internal/lan/                network transport (knows nothing about the rules)
+  code.go                    join codes
+  peer.go                    framed JSON connection, heartbeat, graceful close
+  discovery.go               "who is hosting?" probes and answers
+  addrs.go addrs_android.go  local addresses, best network first
+internal/devflags/           development-only switches (the `cdp` build tag)
 frontend/src/
   App.tsx                    screens, game flow, input routing, back()
   api/backend.ts             Wails bindings adapter (+ runtime detection)
   api/preview.ts             browser-only stand-in (TS rules + greedy AI)
   game/rules.ts layout.ts    TS rules port, board geometry
   game/audio.ts              procedural sound
-  ui/                        Board (SVG), GameScreen, Title, dialogs, gamepad
+  ui/                        Board (SVG), GameScreen, Title, dialogs, gamepad,
+                             LanDialog (host / join)
   i18n/                      en.ts (reference), ru.ts, uz.ts
 frontend/scripts/            check-vectors.ts, check-i18n.mjs
 build/                       Wails build config, icons, Android project
@@ -163,6 +234,9 @@ build/                       Wails build config, icons, Android project
   Go call shows an error with Retry instead.
 - **Rule parity:** `npm run test:rules` replays the Go-generated vectors through
   `rules.ts`.
+- **Network state** reaches the UI through `NetWait`, a long-poll bound method
+  the UI keeps open during a match (it returns on every change, or after 20 s).
+  This avoids depending on event delivery over the Android bridge.
 
 ## Develop
 
@@ -181,6 +255,18 @@ go vet ./internal/... && go test ./internal/...    # add -short to skip AI-vs-AI
 cd frontend && npx tsc --noEmit && npm run test:rules && node scripts/check-i18n.mjs
 BASALT_BALANCE=1 go test ./internal/engine -run TestBalance -v      # rule study (minutes)
 BASALT_STRENGTH=1 go test ./internal/game -run TestStrengthReal -v  # level strength (minutes)
+go test ./internal/game -run LAN -race                              # two services playing over loopback
+```
+
+To try local-network play on one Windows PC, run two copies with separate
+profiles. The `cdp` build tag also opens the WebView2 DevTools protocol on
+`BASALT_CDP_PORT`, so a Playwright script (`chromium.connectOverCDP`) can drive
+both windows. Never ship that build: anything on the machine could control the
+app through the port.
+
+```powershell
+go build -tags "cdp production" -ldflags="-H windowsgui" -o bin/basalt-cdp.exe .
+# per copy: its own APPDATA (profile), WEBVIEW2_USER_DATA_FOLDER and BASALT_CDP_PORT
 ```
 
 After changing Go service signatures: `wails3 generate bindings -clean=true -ts -i`.

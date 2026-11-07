@@ -6,6 +6,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
+	"basalt/internal/devflags"
 	"basalt/internal/game"
 )
 
@@ -27,6 +28,8 @@ func main() {
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
+		// Empty unless built with -tags cdp (end-to-end tests).
+		Windows: application.WindowsOptions{AdditionalBrowserArgs: devflags.BrowserArgs()},
 	})
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{

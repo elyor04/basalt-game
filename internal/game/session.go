@@ -9,6 +9,7 @@ const (
 	ModeAI      = "ai"
 	ModeHotseat = "hotseat"
 	ModePuzzle  = "puzzle"
+	ModeLAN     = "lan" // two devices on the same local network (lan.go)
 )
 
 // session is the live game. It is only touched under GameService.mu.
@@ -125,8 +126,23 @@ func (s *session) undoPlies(n int) {
 	}
 }
 
+// replay rebuilds the game from the start position with these moves.
+func (s *session) replay(moves []int) error {
+	t := &session{mode: s.mode, human: s.human, start: s.start, states: []engine.State{s.start}}
+	for _, m := range moves {
+		if _, err := t.play(m); err != nil {
+			return err
+		}
+	}
+	s.states, s.moves, s.records = t.states, t.moves, t.records
+	if s.moves == nil {
+		s.moves = []int{}
+	}
+	return nil
+}
+
 func (s *session) saved() *SavedGame {
-	if s.over() || s.puzzleFailed() {
+	if s.mode == ModeLAN || s.over() || s.puzzleFailed() {
 		return nil
 	}
 	return &SavedGame{
@@ -181,6 +197,8 @@ type GameView struct {
 	SaveFailed  bool         `json:"saveFailed"`
 	// Forfeit: replacing this unfinished game counts as a resignation.
 	Forfeit bool `json:"forfeit"`
+	// RemoteTurn: a network game waiting for the rival's move.
+	RemoteTurn bool `json:"remoteTurn"`
 }
 
 var reasonNames = map[int8]string{
@@ -215,6 +233,7 @@ func (s *session) view() GameView {
 		Hints:       s.hints,
 		SaveFailed:  s.saveFailed,
 		Forfeit:     s.forfeitOnReplace(),
+		RemoteTurn:  s.mode == ModeLAN && w == engine.NoWinner && st.ToMove != s.human,
 	}
 	if s.mode == ModePuzzle {
 		v.PuzzleMoves = s.humanMoves()

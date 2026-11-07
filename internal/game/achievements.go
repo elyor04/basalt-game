@@ -16,6 +16,7 @@ var achievements = []Achievement{
 	{"unbroken"},     // beat an AI without losing a single stone
 	{"hotseat"},      // finish a two-player game
 	{"puzzle"},       // solve a daily puzzle
+	{"lan"},          // finish a game against another device
 }
 
 func findAchievement(id string) (Achievement, bool) {

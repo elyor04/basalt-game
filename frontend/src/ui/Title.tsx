@@ -13,6 +13,8 @@ interface Props {
   onContinue: () => void;
   onVsAI: () => void;
   onHotseat: () => void;
+  /** Local-network play; absent in the browser preview. */
+  onLan?: () => void;
   onDaily: () => void;
   onOpen: (what: "howto" | "profile" | "settings") => void;
   onLanguage: (l: Lang) => void;
@@ -67,6 +69,12 @@ export function Title(p: Props) {
             <span className="menu-label">{t("title.hotseat")}</span>
             <span className="menu-sub">{t("title.hotseatSub")}</span>
           </button>
+          {p.onLan && (
+            <button type="button" className="menu-item" onClick={p.onLan}>
+              <span className="menu-label">{t("title.lan")}</span>
+              <span className="menu-sub">{t("title.lanSub")}</span>
+            </button>
+          )}
           {p.daily && (
             <button type="button" className="menu-item" onClick={p.onDaily}>
               <span className="menu-label">{t("title.daily")}</span>

@@ -17,7 +17,7 @@ const LEVELS = ["ember", "magma", "caldera"] as const;
 function fresh(): Profile {
   const ds = () => ({ wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0 });
   return {
-    stats: { ember: ds(), magma: ds(), caldera: ds(), streak: 0, bestStreak: 0, hotseatGames: 0, stonesPushed: 0 },
+    stats: { ember: ds(), magma: ds(), caldera: ds(), streak: 0, bestStreak: 0, hotseatGames: 0, stonesPushed: 0, lan: { wins: 0, losses: 0, draws: 0 } },
     achievements: [], puzzles: [], saved: null,
     settings: { language: "", volume: 0.7, haptics: true, confirmTouch: true, showPreview: true, faceToFace: false, difficulty: "ember", color: "lava" },
   };
@@ -217,7 +217,7 @@ export function previewBackend(): Backend {
       winLine: reason === "line" && w !== DRAW ? (winningLine(st, w) ?? []) : [],
       canUndo: canUndo(s), aiTurn: aiTurn(s), history: s.history.slice(), captureGoal: CAPTURE_GOAL, lineLength: LINE_LENGTH,
       puzzleKey: s.puzzleKey, puzzleMoves: s.mode === "puzzle" ? humanMoves(s) : 0, failed: failed(s), outcome: s.outcome,
-      undos: s.undos, hints: s.hints, saveFailed: false, forfeit: forfeit(s),
+      undos: s.undos, hints: s.hints, saveFailed: false, forfeit: forfeit(s), remoteTurn: false,
     };
   };
 
@@ -316,6 +316,7 @@ export function previewBackend(): Backend {
 
   return {
     native: false,
+    lan: null, // the browser preview has no network play
     getProfile: async () => structuredClone(profile),
     saveSettings: async (s: Settings) => {
       profile.settings = { ...s };

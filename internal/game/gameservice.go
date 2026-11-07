@@ -12,6 +12,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"basalt/internal/engine"
+	"basalt/internal/lan"
 )
 
 // GameError is returned to the frontend. Wails serialises the error value
@@ -117,6 +118,14 @@ type GameService struct {
 	puzzles  map[string]engine.Puzzle
 	// levels is replaceable in tests to keep AI turns fast.
 	levels func(string) Level
+
+	// Local-network play (lan.go). ver/verCh wake NetWait on every change.
+	m          *netMatch
+	browser    *lan.Browser
+	ver        uint64
+	verCh      chan struct{}
+	localAddrs func() []lan.LocalAddr // replaceable in tests
+	lanGrace   time.Duration
 }
 
 // NewGameService wires a service to the platform's save directory.
@@ -125,7 +134,10 @@ func NewGameService() *GameService {
 }
 
 func newService(store *Store) *GameService {
-	return &GameService{store: store, now: time.Now, puzzles: map[string]engine.Puzzle{}, levels: levelFor}
+	return &GameService{
+		store: store, now: time.Now, puzzles: map[string]engine.Puzzle{}, levels: levelFor,
+		verCh: make(chan struct{}), localAddrs: lan.LocalAddrs, lanGrace: lanGrace,
+	}
 }
 
 // saveDir prefers the native app storage path on mobile and falls back to the
@@ -165,6 +177,7 @@ func (g *GameService) ResetProfile() (Profile, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.stopSearchLocked()
+	g.leaveLocked()
 	p, err := g.store.Update(func(p *Profile) error {
 		settings := p.Settings
 		*p = newProfile()
@@ -221,6 +234,9 @@ func (g *GameService) NewGame(opts NewGameOptions) (GameView, error) {
 	}
 	s.states = []engine.State{s.start}
 
+	// A network match in progress ends (leaving counts as resigning).
+	g.leaveLocked()
+
 	// Forfeit the game being replaced if that is what fairness requires.
 	if old := g.sess; old != nil && old.forfeitOnReplace() {
 		old.resigned = old.human
@@ -272,6 +288,9 @@ func (g *GameService) Play(id int64, cell int) (MoveResult, error) {
 		return MoveResult{}, ErrOver
 	}
 	g.stopSearchLocked() // a pending hint is now stale
+	if s.mode == ModeLAN {
+		return g.playLANLocked(s, cell)
+	}
 	return g.applyLocked(s, cell)
 }
 
@@ -332,6 +351,10 @@ func (g *GameService) Hint(ctx context.Context, id int64) (Hint, error) {
 	if err != nil {
 		g.mu.Unlock()
 		return Hint{}, err
+	}
+	if s.mode == ModeLAN {
+		g.mu.Unlock()
+		return Hint{}, ErrNoHints
 	}
 	if s.over() || s.aiTurn() || s.puzzleFailed() {
 		g.mu.Unlock()
@@ -417,14 +440,25 @@ func (g *GameService) Resign(id int64) (GameView, error) {
 		return GameView{}, ErrOver
 	}
 	g.stopSearchLocked()
+	var m *netMatch
 	switch s.mode {
+	case ModeLAN:
+		if m, err = g.lanConnectedLocked(s); err != nil {
+			return GameView{}, err
+		}
+		s.resigned = s.human
 	case ModeAI, ModePuzzle:
 		s.resigned = s.human
 	default:
 		s.resigned = s.state().ToMove
 	}
-	if _, err := g.recordLocked(s); err != nil {
+	if _, err := g.recordLocked(s); err != nil && m == nil {
 		return GameView{}, err
+	} else if err != nil {
+		s.saveFailed = true
+	}
+	if m != nil {
+		g.lanTellLocked(m, lan.Msg{T: "resign"})
 	}
 	return s.view(), nil
 }
@@ -611,6 +645,19 @@ func (g *GameService) recordLocked(s *session) (*Outcome, error) {
 			}
 			p.Stats.HotseatGames++
 			g.grantFor(p, out, "hotseat")
+		case ModeLAN:
+			switch winner {
+			case s.human:
+				out.Result = "win"
+				p.Stats.LAN.Wins++
+			case engine.Draw:
+				out.Result = "draw"
+				p.Stats.LAN.Draws++
+			default:
+				out.Result = "loss"
+				p.Stats.LAN.Losses++
+			}
+			g.grantFor(p, out, "lan")
 		case ModePuzzle:
 			if winner == s.human {
 				out.Result = "win"

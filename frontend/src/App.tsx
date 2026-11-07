@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Window } from "@wailsio/runtime";
-import { Backend, BackendError, DailyPuzzle, Difficulty, GameView, MoveResult, NewGameOptions, Pending, Profile, Settings, connect } from "./api/backend";
+import { Backend, BackendError, DailyPuzzle, Difficulty, GameView, MoveResult, NetStatus, NewGameOptions, Pending, Profile, Settings, connect } from "./api/backend";
 import { AudioEngine } from "./game/audio";
 import { DRAW, GameEvent, NUM_CELLS, State, coords, indexOf } from "./game/rules";
 import { axialToXY } from "./game/layout";
 import { I18nProvider, Lang, errorText, makeI18n, resolveLang } from "./i18n";
 import type { PointerKind } from "./ui/Board";
 import { GameScreen, InputMode } from "./ui/GameScreen";
+import { LanDialog } from "./ui/LanDialog";
 import { ForfeitDialog, HistoryDialog, HowToDialog, PauseDialog, ProfileDialog, ResultDialog, SettingsDialog, SetupDialog } from "./ui/Screens";
 import { Title } from "./ui/Title";
 import { useGamepadMenus, usePad } from "./ui/gamepadNav";
 
-type Overlay = "setup" | "pause" | "settings" | "howto" | "profile" | "history" | "forfeit";
+type Overlay = "setup" | "pause" | "settings" | "howto" | "profile" | "history" | "forfeit" | "lan";
 type Display = { state: State; events: GameEvent[]; key: number };
 
 const RESULT_DELAY_MS = 900; // let the final push play out first
@@ -54,6 +55,8 @@ export default function App() {
   const [reducedMotion, setReducedMotion] = useState(prefersReduced());
   const [pendingStart, setPendingStart] = useState<NewGameOptions | null>(null);
   const [setup, setSetup] = useState<{ difficulty: Difficulty; color: string }>({ difficulty: "ember", color: "lava" });
+  // The local-network match (null when there is none).
+  const [net, setNet] = useState<NetStatus | null>(null);
 
   const lang: Lang = resolveLang(profile?.settings.language);
   const i18n = useMemo(() => makeI18n(lang), [lang]);
@@ -87,8 +90,8 @@ export default function App() {
   const touchSeen = useRef(coarse());
 
   // Mirrors for long-lived handlers.
-  const live = useRef({ screen, overlays, game, thinking, resultOpen, previewCell, cursor, profile, inputMode });
-  live.current = { screen, overlays, game, thinking, resultOpen, previewCell, cursor, profile, inputMode };
+  const live = useRef({ screen, overlays, game, thinking, resultOpen, previewCell, cursor, profile, inputMode, net, displayPly: display.state.ply, displayGame: 0 });
+  live.current = { ...live.current, screen, overlays, game, thinking, resultOpen, previewCell, cursor, profile, inputMode, net, displayPly: display.state.ply };
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -115,9 +118,11 @@ export default function App() {
       setProfile(p);
       audio.setVolume(p.settings.volume);
       setSetup({ difficulty: (p.settings.difficulty as Difficulty) || "ember", color: p.settings.color || "lava" });
-      setGame(cur && !cur.winner && !cur.failed ? cur : null);
+      setGame(cur && !cur.winner && !cur.failed && cur.mode !== "lan" ? cur : null);
       be.dailyPuzzle().then(setDaily).catch(() => setDaily(null));
       setScreen("title");
+      // The page reloaded during a network match (Go kept it): rejoin it.
+      if (cur?.mode === "lan" && be.lan) be.lan.status().then((st) => onNetRef.current(st)).catch(() => {});
     } catch (e) {
       setBootError(errorText(i18nRef.current, e) + (e instanceof Error && e.message ? ` (${e.message})` : ""));
     } finally {
@@ -231,6 +236,7 @@ export default function App() {
   }, [fail, playSounds, scheduleResult, showBoard]);
 
   const enterGame = useCallback((g: GameView) => {
+    live.current.displayGame = g.id;
     stopAI();
     clearTimeout(resultTimer.current);
     setGame(g);
@@ -267,7 +273,8 @@ export default function App() {
     const be = beRef.current;
     const g = live.current.game;
     if (!be || !g || placing.current) return;
-    if (g.winner || g.failed || g.aiTurn || live.current.thinking || g.cells[cell] !== 0) {
+    const offline = g.mode === "lan" && live.current.net?.phase !== "playing";
+    if (g.winner || g.failed || g.aiTurn || g.remoteTurn || offline || live.current.thinking || g.cells[cell] !== 0) {
       audio.play("deny");
       haptic("warning");
       return;
@@ -290,6 +297,9 @@ export default function App() {
       fail(e);
     } finally {
       placing.current = false;
+      // onNet skips network updates while a stone is being placed; catch up
+      // on anything (a resignation, say) that arrived in the meantime.
+      if (g.mode === "lan") be.lan?.status().then((st) => onNetRef.current(st)).catch(() => {});
     }
   }, [audio, fail, haptic, playSounds, requestAI, scheduleResult, showBoard]);
 
@@ -314,7 +324,7 @@ export default function App() {
   const hint = useCallback(async () => {
     const be = beRef.current;
     const g = live.current.game;
-    if (!be || !g || g.winner || g.failed || g.aiTurn || live.current.thinking || hintCall.current) return;
+    if (!be || !g || g.mode === "lan" || g.winner || g.failed || g.aiTurn || live.current.thinking || hintCall.current) return;
     const call = be.hint(g.id);
     hintCall.current = call;
     try {
@@ -358,16 +368,162 @@ export default function App() {
     setHintCell(null);
     setScreen("title");
     const g = live.current.game;
-    if (g && (g.winner || g.failed)) setGame(null);
+    if (g && (g.winner || g.failed || g.mode === "lan")) setGame(null);
+    if (g?.mode === "lan" || live.current.net) {
+      // Leaving ends the match (a game in progress counts as resigned).
+      setNet(null);
+      beRef.current?.lan
+        ?.leave()
+        .catch(() => {})
+        .finally(() => beRef.current?.getProfile().then(setProfile).catch(() => {}));
+      return;
+    }
     beRef.current?.getProfile().then(setProfile).catch(() => {});
   }, [stopAI]);
 
   const again = useCallback(() => {
     const g = live.current.game;
     if (!g) return;
+    if (g.mode === "lan") {
+      const lan = beRef.current?.lan;
+      if (!lan || live.current.net?.phase !== "playing" || live.current.net.wantRematch) return;
+      audio.play("ui");
+      lan.rematch(true).then((st) => onNetRef.current(st)).catch(fail);
+      return;
+    }
     if (g.mode === "ai") void startGame({ mode: "ai", difficulty: g.difficulty, color: setup.color });
     else void startGame({ mode: g.mode, difficulty: "", color: "" });
-  }, [setup.color, startGame]);
+  }, [audio, fail, setup.color, startGame]);
+
+  // ---------------------------------------------------------------- network
+
+  /** Apply a network status from Go: new games, the rival's moves, results. */
+  const onNet = useCallback((st: NetStatus) => {
+    const l = live.current;
+    // A call's reply and the long-poll can arrive in either order: keep the
+    // newest state.
+    if (l.net && st.phase !== "off" && st.version < l.net.version) return;
+    l.net = st.phase === "off" ? null : st;
+    setNet(l.net);
+    if (st.phase === "off") return;
+    if (st.role === "host" && st.phase === "hosting" && l.screen === "game") {
+      // The guest left before anyone moved: wait for someone else.
+      clearTimeout(resultTimer.current);
+      setResultOpen(false);
+      setGame(null);
+      setScreen("title");
+      setOverlays(["lan"]);
+      showToast(i18nRef.current.t("game.net.left"));
+      return;
+    }
+    const g = st.game;
+    if (!g) return;
+    if (l.screen !== "game" || !l.game || l.game.id !== g.id) {
+      // The match began, a rematch started, or the page reloaded mid-match.
+      if ((st.phase === "playing" || st.phase === "lost") && !g.winner) {
+        audio.play("ui");
+        haptic("medium");
+        enterGame(g);
+      }
+      return;
+    }
+    // This device's own stone is being placed: place() draws it.
+    if (placing.current) return;
+    const cur = l.game;
+    if (g.ply !== l.displayPly || l.displayGame !== g.id) {
+      const r = st.remote;
+      if (r && r.game.id === g.id && r.game.ply === g.ply && g.ply === l.displayPly + 1) {
+        showBoard(g, r.events);
+        playSounds(r.events);
+      } else showBoard(g);
+      l.displayGame = g.id;
+      setPreviewCell(null);
+    }
+    setGame(g);
+    if ((g.winner || g.failed) && !cur.winner && !cur.failed) {
+      scheduleResult(g);
+      beRef.current?.getProfile().then(setProfile).catch(() => {});
+    }
+  }, [audio, enterGame, haptic, playSounds, scheduleResult, showBoard, showToast]);
+  const onNetRef = useRef(onNet);
+  onNetRef.current = onNet;
+
+  // While a match exists, keep one NetWait call open and apply what it brings.
+  const netActive = !!net;
+  useEffect(() => {
+    const lan = beRef.current?.lan;
+    if (!netActive || !lan) return;
+    let stopped = false;
+    let call: Pending<NetStatus> | null = null;
+    void (async () => {
+      let version = live.current.net?.version ?? 0;
+      while (!stopped) {
+        call = lan.wait(version);
+        try {
+          const st = await call.promise;
+          if (stopped) return;
+          version = st.version;
+          onNetRef.current(st);
+          if (st.phase === "off") return;
+        } catch {
+          if (stopped) return;
+          await new Promise((r) => window.setTimeout(r, 800));
+        }
+      }
+    })();
+    return () => {
+      stopped = true;
+      call?.cancel();
+    };
+  }, [netActive]);
+
+  // Bumped by stopLan: a host or join request that finishes afterwards was
+  // cancelled, and its result must not pull the player into a game.
+  const lanRequest = useRef(0);
+
+  const hostLan = useCallback(async () => {
+    const lan = beRef.current?.lan;
+    if (!lan) return;
+    const req = ++lanRequest.current;
+    try {
+      await flushSettings.current();
+      const st = await lan.host();
+      if (req !== lanRequest.current) return void lan.leave().catch(() => {});
+      onNetRef.current(st);
+    } catch (e) {
+      if (req === lanRequest.current) fail(e);
+    }
+  }, [fail]);
+
+  const joinLan = useCallback(async (code: string): Promise<string | null> => {
+    const lan = beRef.current?.lan;
+    if (!lan) return null;
+    const req = ++lanRequest.current;
+    try {
+      await flushSettings.current();
+      const st = await lan.join(code);
+      if (req !== lanRequest.current) {
+        lan.leave().catch(() => {});
+        return null;
+      }
+      onNetRef.current(st);
+      return null;
+    } catch (e) {
+      if (req !== lanRequest.current || (e instanceof BackendError && e.code === "cancelled")) return null;
+      audio.play("deny");
+      return errorText(i18nRef.current, e);
+    }
+  }, [audio]);
+
+  /** Stop hosting or joining, even mid-request (the dialog stays open). */
+  const stopLan = useCallback(() => {
+    const lan = beRef.current?.lan;
+    lanRequest.current++;
+    if (!lan || live.current.screen === "game") return;
+    live.current.net = null;
+    setNet(null);
+    lan.leave().catch(() => {});
+  }, []);
 
   // ---------------------------------------------------------------- input
 
@@ -378,6 +534,7 @@ export default function App() {
   };
   const closeOverlay = () => {
     audio.play("back");
+    if (live.current.overlays[live.current.overlays.length - 1] === "lan") stopLan();
     setOverlays((s) => s.slice(0, -1));
   };
 
@@ -578,6 +735,7 @@ export default function App() {
       setResultOpen(false);
       setScreen("title");
       setGame(null);
+      setNet(null);
       be.dailyPuzzle().then(setDaily).catch(() => {});
       showToast(i18n.t("settings.resetDone"));
     } catch (e) {
@@ -642,6 +800,7 @@ export default function App() {
             onContinue={() => void continueGame()}
             onVsAI={() => openOverlay("setup")}
             onHotseat={() => startOrConfirm({ mode: "hotseat", difficulty: "", color: "" })}
+            onLan={beRef.current?.lan ? () => openOverlay("lan") : undefined}
             onDaily={() => startOrConfirm({ mode: "puzzle", difficulty: "", color: "" })}
             onOpen={(w) => openOverlay(w)}
             onLanguage={(l) => profile && changeSettings({ ...profile.settings, language: l })}
@@ -653,6 +812,8 @@ export default function App() {
         <div className="layer" {...inertProps}>
           <GameScreen
             game={game}
+            net={game.mode === "lan" ? net : null}
+            onLeave={toTitle}
             display={display}
             settings={profile.settings}
             thinking={thinking}
@@ -681,6 +842,7 @@ export default function App() {
       {screen === "game" && game && resultOpen && overlays.length === 0 && (
         <ResultDialog
           game={game}
+          net={game.mode === "lan" ? net : null}
           onAgain={() => resultArmed() && again()}
           onReview={() => resultArmed() && setResultOpen(false)}
           onMenu={() => resultArmed() && toTitle()}
@@ -697,9 +859,22 @@ export default function App() {
           onBack={closeOverlay}
         />
       )}
+      {topOverlay === "lan" && beRef.current?.lan && (
+        <LanDialog
+          lan={beRef.current.lan}
+          net={net}
+          forfeitLevel={savedForfeit}
+          onHost={hostLan}
+          onJoin={joinLan}
+          onStop={stopLan}
+          onClose={closeOverlay}
+        />
+      )}
       {topOverlay === "pause" && game && (
         <PauseDialog
-          canResign={!game.winner && !game.failed && game.history.length > 0}
+          canResign={!game.winner && !game.failed && game.history.length > 0 && (game.mode !== "lan" || net?.phase === "playing")}
+          lan={game.mode === "lan"}
+          leaveResigns={game.mode === "lan" && !game.winner && game.history.length > 0 && net?.phase !== "closed"}
           onResume={closeOverlay}
           onHowTo={() => openOverlay("howto")}
           onSettings={() => openOverlay("settings")}

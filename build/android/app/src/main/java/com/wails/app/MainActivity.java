@@ -11,6 +11,7 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
+import android.net.wifi.WifiManager;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -929,9 +930,33 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // Basalt: many phones drop broadcast packets on Wi-Fi to save power. Local
+    // network play finds games with broadcast "who is hosting?" probes, so
+    // hold a multicast lock while the app is in the foreground.
+    private WifiManager.MulticastLock multicastLock;
+
+    private void setMulticastLock(boolean on) {
+        try {
+            if (on) {
+                if (multicastLock == null) {
+                    WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                    if (wm == null) return;
+                    multicastLock = wm.createMulticastLock("basalt-lan");
+                    multicastLock.setReferenceCounted(false);
+                }
+                multicastLock.acquire();
+            } else if (multicastLock != null && multicastLock.isHeld()) {
+                multicastLock.release();
+            }
+        } catch (RuntimeException e) {
+            Log.w("Basalt", "multicast lock: " + e);
+        }
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
+        setMulticastLock(true);
         if (bridge != null) {
             bridge.onResume();
         }
@@ -940,6 +965,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
+        setMulticastLock(false);
         if (bridge != null) {
             bridge.onPause();
         }

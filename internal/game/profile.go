@@ -47,6 +47,14 @@ type Stats struct {
 	BestStreak   int       `json:"bestStreak"` // longest win streak against any AI
 	HotseatGames int       `json:"hotseatGames"`
 	StonesPushed int       `json:"stonesPushed"` // enemy stones you pushed off vs the AI
+	LAN          LANStats  `json:"lan"`          // games against another device
+}
+
+// LANStats are the results of local-network games.
+type LANStats struct {
+	Wins   int `json:"wins"`
+	Losses int `json:"losses"`
+	Draws  int `json:"draws"`
 }
 
 // SavedGame lets an unfinished game survive the app being closed. Only the
@@ -152,6 +160,9 @@ func (p *Profile) normalize() {
 	p.Stats.BestStreak = max(p.Stats.BestStreak, p.Stats.Streak)
 	p.Stats.HotseatGames = max(p.Stats.HotseatGames, 0)
 	p.Stats.StonesPushed = max(p.Stats.StonesPushed, 0)
+	p.Stats.LAN.Wins = max(p.Stats.LAN.Wins, 0)
+	p.Stats.LAN.Losses = max(p.Stats.LAN.Losses, 0)
+	p.Stats.LAN.Draws = max(p.Stats.LAN.Draws, 0)
 	if p.Version == 0 {
 		p.Settings = defaultSettings()
 	}

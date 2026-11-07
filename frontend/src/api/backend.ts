@@ -16,7 +16,7 @@ export type Hint = M.Hint;
 export type DailyPuzzle = M.DailyPuzzle;
 export type NewGameOptions = M.NewGameOptions;
 
-export type Mode = "ai" | "hotseat" | "puzzle";
+export type Mode = "ai" | "hotseat" | "puzzle" | "lan";
 export type Difficulty = "ember" | "magma" | "caldera";
 
 export interface Outcome {
@@ -67,6 +67,8 @@ export interface GameView {
   saveFailed: boolean;
   /** Replacing this unfinished AI game would count as a resignation. */
   forfeit: boolean;
+  /** A network game waiting for the rival's move. */
+  remoteTurn: boolean;
 }
 
 export interface MoveResult {
@@ -74,6 +76,44 @@ export interface MoveResult {
   move: number;
   player: number;
   events: GameEvent[];
+}
+
+export type NetPhase = "off" | "hosting" | "joining" | "playing" | "lost" | "closed";
+
+/** Everything about a local-network match (Go: game.NetStatus). */
+export interface NetStatus {
+  version: number;
+  phase: NetPhase;
+  role: "host" | "guest" | "";
+  /** Why a closed match ended: "left", "timeout", "error", "busy" or "version". */
+  reason: string;
+  code: string;
+  altCodes: string[];
+  discoverable: boolean;
+  wantRematch: boolean;
+  peerRematch: boolean;
+  game: GameView | null;
+  /** The rival's latest move in this game, for animation. */
+  remote: MoveResult | null;
+}
+
+export interface LANGame {
+  code: string;
+  name: string;
+}
+
+/** Local-network play. Only the native app has it. */
+export interface LanApi {
+  host(): Promise<NetStatus>;
+  /** Games seen on the network in the last few seconds (starts looking). */
+  browse(): Promise<LANGame[]>;
+  stopBrowse(): void;
+  join(code: string): Promise<NetStatus>;
+  status(): Promise<NetStatus>;
+  /** Resolves when the state is newer than `version` (or after ~20 s). */
+  wait(version: number): Pending<NetStatus>;
+  rematch(want: boolean): Promise<NetStatus>;
+  leave(): Promise<NetStatus>;
 }
 
 /** A request that can be abandoned; the Go side stops thinking too. */
@@ -98,6 +138,7 @@ export interface Backend {
   resign(id: number): Promise<GameView>;
   dailyPuzzle(): Promise<DailyPuzzle>;
   haptic(kind: "light" | "medium" | "heavy" | "success" | "warning" | "error" | "selection"): void;
+  lan: LanApi | null;
 }
 
 /** An error from the game service. `code` matches Go's GameError.Code. */
@@ -169,6 +210,31 @@ function fixMove(r: M.MoveResult): MoveResult {
   return { game: fixGame(r.game), move: r.move, player: r.player, events: (r.events ?? []) as GameEvent[] };
 }
 
+export function fixNet(n: M.NetStatus): NetStatus {
+  return {
+    ...n,
+    phase: (n.phase || "off") as NetPhase,
+    role: (n.role || "") as NetStatus["role"],
+    altCodes: n.altCodes ?? [],
+    game: n.game ? fixGame(n.game) : null,
+    remote: n.remote ? fixMove(n.remote) : null,
+  };
+}
+
+const nativeLan: LanApi = {
+  host: async () => fixNet(await wrap(Go.HostLAN())),
+  browse: async () => ((await wrap(Go.BrowseLAN())) ?? []).map((g) => ({ code: g.code, name: g.name })),
+  stopBrowse: () => void Go.StopBrowseLAN().catch(() => {}),
+  join: async (code) => fixNet(await wrap(Go.JoinLAN(code))),
+  status: async () => fixNet(await wrap(Go.LANStatus())),
+  wait: (version) => {
+    const call = Go.NetWait(version);
+    return { promise: wrap(call).then(fixNet), cancel: () => call.cancel() };
+  },
+  rematch: async (want) => fixNet(await wrap(Go.RematchLAN(want))),
+  leave: async () => fixNet(await wrap(Go.LeaveLAN())),
+};
+
 const native: Backend = {
   native: true,
   getProfile: async () => fixProfile(await wrap(Go.GetProfile())),
@@ -197,6 +263,7 @@ const native: Backend = {
   resign: async (id) => fixGame(await wrap(Go.Resign(id))),
   dailyPuzzle: () => wrap(Go.GetDailyPuzzle()),
   haptic: (k) => void Go.Haptic(k).catch(() => {}),
+  lan: nativeLan,
 };
 
 /**
