@@ -130,8 +130,8 @@ tasks:
         fi
       - |
         # Compile asset catalog and embed icons in the app bundle
-        APP_BUNDLE="{{.BIN_DIR}}/{{.APP_NAME}}.app"
-        AC_IN="build/ios/xcode/main/Assets.xcassets"
+        APP_BUNDLE="$PWD/{{.BIN_DIR}}/{{.APP_NAME}}.app"
+        AC_IN="$PWD/build/ios/xcode/main/Assets.xcassets"
         if [ -d "$AC_IN" ]; then
           TMP_AC=$(mktemp -d)
           xcrun actool \
@@ -297,8 +297,8 @@ tasks:
       - cp build/ios/Info.dev.plist "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Info.plist"
       - |
         # Compile asset catalog and embed icons for dev bundle
-        APP_BUNDLE="{{.BIN_DIR}}/{{.APP_NAME}}.dev.app"
-        AC_IN="build/ios/xcode/main/Assets.xcassets"
+        APP_BUNDLE="$PWD/{{.BIN_DIR}}/{{.APP_NAME}}.dev.app"
+        AC_IN="$PWD/build/ios/xcode/main/Assets.xcassets"
         if [ -d "$AC_IN" ]; then
           TMP_AC=$(mktemp -d)
           xcrun actool \
