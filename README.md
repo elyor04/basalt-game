@@ -206,4 +206,36 @@ the Android debug key: fine for sideloading, not accepted by Google Play. The
 application id is `com.basalt.game`. The APK requests only Internet, vibration
 and network-state permissions (the template's camera, location, biometric,
 notification and foreground-service entries were removed), and the activity
-pads the WebView clear of the system bars for Android 15+ edge-to-edge. Windows and macOS builds are unsigned.
+pads the WebView clear of the system bars for Android 15+ edge-to-edge. Windows
+builds are unsigned.
+
+### macOS and iOS
+
+Needs a Mac with Xcode.
+
+```bash
+wails3 task darwin:package             # bin/basalt.app, arm64, ad-hoc signed
+wails3 task darwin:package:universal   # same, arm64 + amd64
+wails3 task darwin:package:dmg         # bin/basalt.dmg installer
+wails3 task ios:package                # bin/basalt.app for the iOS Simulator (iOS 15+)
+wails3 task ios:deploy-simulator       # package, install and launch on the booted simulator
+```
+
+- Both packages are written to `bin/basalt.app`, so move one aside before
+  building the other platform.
+- The macOS icons (`build/darwin/icons.icns` and `Assets.car`) are compiled from
+  `build/appicon.icon`. Its only layer is a full-bleed copy of
+  `build/appicon.png`, the same artwork as the Windows and Android icons. After
+  changing `appicon.png`, refresh that layer, then rebuild the icons. The icon
+  task also rewrites `build/windows/icon.ico`.
+
+  ```bash
+  magick \( build/appicon.png -resize 135% -gravity center -extent 1024x1024 -blur 0x24 -background black -alpha remove \) \
+    build/appicon.png -gravity center -composite -alpha off build/appicon.icon/Assets/appicon.png
+  wails3 task common:generate:icons
+  ```
+- `build/ios/xcode/` is regenerated from `build/config.yml` and
+  `build/appicon.png` on every iOS build and is not committed.
+- A real iPhone needs real signing and a provisioning profile:
+  `wails3 task ios:package:ipa IOS_PLATFORM=device CODESIGN_IDENTITY="Apple Development: …" PROVISIONING_PROFILE=path/to/profile.mobileprovision`,
+  or `wails3 task ios:xcode` to let Xcode manage signing.
