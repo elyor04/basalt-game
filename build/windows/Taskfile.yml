@@ -146,6 +146,7 @@ tasks:
           --executable "{{.ROOT_DIR}}/{{.BIN_DIR}}/{{.APP_NAME}}.exe" \
           --arch "{{.ARCH}}" \
           --out "{{.ROOT_DIR}}/{{.BIN_DIR}}/{{.APP_NAME}}-{{.ARCH}}.msix" \
+          --icon "{{.ROOT_DIR}}/build/appicon.png" \
           {{if .CERT_PATH}}--cert "{{.CERT_PATH}}"{{end}} \
           {{if .PUBLISHER}}--publisher "{{.PUBLISHER}}"{{end}} \
           {{if eq .USE_MSIX_TOOL "true"}}--use-msix-tool{{else}}--use-makeappx{{end}}
