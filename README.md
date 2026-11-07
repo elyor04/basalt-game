@@ -152,7 +152,8 @@ build/                       Wails build config, icons, Android project
   the UI cannot report a fake win. Abandoning a started AI game counts as a
   resignation (the UI asks first).
 - **Errors** are `GameError{Code, Message}`; Wails puts them in the JS error's
-  `cause` and the UI translates the code.
+  `cause` and the UI translates the code. The Android transport drops `cause`,
+  so `Error()` also ends with `[code]` and the UI falls back to reading that.
 - **Profile store:** mutex, deep copy on read, the update runs on a copy and is
   discarded if it or the write fails, temp file + fsync + rename, and a corrupt
   file is kept as `profile.<timestamp>.corrupt`. The unfinished game is stored

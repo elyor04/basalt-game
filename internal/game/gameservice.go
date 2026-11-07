@@ -22,7 +22,9 @@ type GameError struct {
 	Message string `json:"message"`
 }
 
-func (e *GameError) Error() string { return e.Message }
+// Error ends with "[code]": the Android transport (Wails 3.1) sends only this
+// text and drops `cause`, so the frontend recovers the code from it.
+func (e *GameError) Error() string { return e.Message + " [" + e.Code + "]" }
 
 var (
 	ErrNoGame      = &GameError{"no_game", "there is no game in progress"}

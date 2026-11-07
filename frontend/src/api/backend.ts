@@ -117,15 +117,20 @@ function safeParse(s: string): unknown {
   }
 }
 
-/** Wails puts the marshalled Go error in `cause`; keep its code. */
+/**
+ * Wails puts the marshalled Go error in `cause`; keep its code. The Android
+ * transport drops `cause` and sends only the text, so fall back to the
+ * "[code]" suffix that Go's GameError.Error() appends.
+ */
 function toBackendError(e: unknown): BackendError {
   if (e instanceof BackendError) return e;
   const cause = (e as { cause?: unknown })?.cause;
   const c = typeof cause === "string" ? safeParse(cause) : cause;
-  const code = (c as { code?: unknown } | undefined)?.code;
   const msg = e instanceof Error ? e.message : typeof e === "string" ? e : "game service error";
   if ((e as { name?: string })?.name === "CancelError") return new BackendError(msg, "cancelled");
-  return new BackendError(msg, typeof code === "string" ? code : "generic");
+  const code = (c as { code?: unknown } | undefined)?.code;
+  const fromText = /\[([a-z_]+)\]\s*$/.exec(msg)?.[1];
+  return new BackendError(msg, typeof code === "string" ? code : fromText ?? "generic");
 }
 
 const wrap = async <T,>(p: PromiseLike<T>): Promise<T> => {
