@@ -174,6 +174,12 @@ export default function App() {
 
   const showBoard = useCallback((g: GameView, events: GameEvent[] = []) => {
     displayKey.current++;
+    // Record what is on the board now, not at the next render: a network
+    // status can arrive before React re-renders, and comparing it with a
+    // stale ply would redraw the board without the move's events (losing
+    // the last-move ring and the push trails).
+    live.current.displayPly = g.ply;
+    live.current.displayGame = g.id;
     setDisplay({ state: toState(g), events, key: displayKey.current });
   }, []);
 

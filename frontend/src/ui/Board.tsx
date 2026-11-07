@@ -56,6 +56,7 @@ function spritesFor(cells: number[], prev: Sprite[]): Sprite[] {
   return out;
 }
 
+const STONE_H = 1.6; // a stone's thickness in SVG units
 const PHASE_PUSH_MS = 150;
 const PHASE_DONE_MS = 760;
 
@@ -252,11 +253,14 @@ function BoardImpl(props: Props) {
         {sprites.map((s) => (
           <g key={s.id} className={`stone-pos${s.falling ? " falling" : ""}`} style={{ transform: `translate(${s.x}px, ${s.y}px)` }}>
             <g className={`stone ${s.color === LAVA ? "lava" : "ash"}${s.fresh ? " fresh" : ""}${s.falling ? " sinking" : ""}`}>
-              {s.color === LAVA && <circle className="glow" r={S * 1.05} />}
-              <ellipse className="shadow" cx={0.6} cy={2.6} rx={S * 0.6} ry={S * 0.6 * K * 0.85} />
-              <ellipse className="body-side" cx={0} cy={1.6} rx={S * 0.58} ry={S * 0.58 * K} />
-              <ellipse className="body" cx={0} cy={0} rx={S * 0.58} ry={S * 0.58 * K} />
-              <ellipse className="sheen" cx={-1.6} cy={-1.5} rx={S * 0.2} ry={S * 0.12} />
+              {/* The stone stands on the column: its base is centred on the
+                  top face and its top is lifted by its thickness, so the
+                  footprint (not the top) matches the hex. */}
+              {s.color === LAVA && <circle className="glow" cy={-STONE_H / 2} r={S * 1.05} />}
+              <ellipse className="shadow" cx={0.6} cy={1} rx={S * 0.6} ry={S * 0.6 * K * 0.85} />
+              <ellipse className="body-side" cx={0} cy={0} rx={S * 0.58} ry={S * 0.58 * K} />
+              <ellipse className="body" cx={0} cy={-STONE_H} rx={S * 0.58} ry={S * 0.58 * K} />
+              <ellipse className="sheen" cx={-1.6} cy={-1.5 - STONE_H} rx={S * 0.2} ry={S * 0.12} />
             </g>
           </g>
         ))}
