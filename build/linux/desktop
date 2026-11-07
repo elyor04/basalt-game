@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=Basalt
+Comment=A duel of pushes on a causeway of basalt columns.
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/basalt %u
+Terminal=false
+Type=Application
+Icon=basalt
+Categories=Utility;
+StartupWMClass=basalt
+
+ 

@@ -1,0 +1,34 @@
+# Paths graphify should leave out of the knowledge graph.
+# gitignore syntax. Stacks on top of .gitignore (can only exclude more).
+# Already skipped by graphify itself: build/, dist/, node_modules/,
+# graphify-out/, package-lock.json, go.sum.
+
+# --- Binary assets: nothing structural to extract; images would
+#     otherwise be sent through vision extraction ---
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.ico
+*.icns
+*.svg
+*.ttf
+*.otf
+*.woff
+*.woff2
+*.mp3
+*.ogg
+*.wav
+
+# --- Third-party license texts ---
+*License*.txt
+LICENSE*
+
+# --- Test fixtures / golden data ---
+*-golden.json
+*.golden
+
+# --- Tooling config with no architecture in it ---
+.npmrc
+.claude/
